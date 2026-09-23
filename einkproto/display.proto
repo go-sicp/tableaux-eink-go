@@ -1,0 +1,112 @@
+syntax = "proto3";
+
+package io.gosicp.tableauxeink.v1;
+
+option go_package = "github.com/go-sicp/tableaux-eink-go/einkproto;einkproto";
+
+import "google/protobuf/empty.proto";
+
+// Display drives the Rockchip EBC kernel device wrapped by einklib.
+//
+// Authentication: every RPC must carry an `authorization: Bearer <token>`
+// header in metadata. The token is generated and printed by the server
+// at first launch.
+//
+// Transport: TLS 1.2+ with a server-presented self-signed certificate
+// generated and persisted by the server at first launch. Clients can
+// either trust the certificate explicitly (--cert flag) or pin its
+// SHA-256 fingerprint.
+service Display {
+  rpc GetInfo(google.protobuf.Empty) returns (DisplayInfo);
+  rpc Refresh(stream RefreshChunk) returns (RefreshResponse);
+  rpc Fill(FillRequest) returns (RefreshResponse);
+  rpc SetOverlay(SetOverlayRequest) returns (google.protobuf.Empty);
+  rpc Health(google.protobuf.Empty) returns (HealthResponse);
+  rpc Rotate(google.protobuf.Empty) returns (RotateResponse);
+  rpc ReissueClientCert(google.protobuf.Empty) returns (ReissueClientCertResponse);
+  rpc GetMetrics(google.protobuf.Empty) returns (GetMetricsResponse);
+}
+
+message DisplayInfo {
+  int32 width = 1;
+  int32 height = 2;
+  int32 virtual_width = 3;
+  int32 virtual_height = 4;
+  bool color = 5;
+  string app_version = 6;
+}
+
+enum WaveformMode {
+  WAVEFORM_MODE_UNSPECIFIED = 0;
+  WAVEFORM_MODE_INIT = 1;
+  WAVEFORM_MODE_DIRECT_UPDATE = 2;
+  WAVEFORM_MODE_GC16 = 3;
+  WAVEFORM_MODE_GCC16 = 4;
+  WAVEFORM_MODE_ANIMATION = 5;
+  WAVEFORM_MODE_PARTIAL = 6;
+  WAVEFORM_MODE_FULL = 7;
+  WAVEFORM_MODE_AUTO = 8;
+  WAVEFORM_MODE_RESET = 9;
+  WAVEFORM_MODE_BLACK_WHITE = 10;
+  WAVEFORM_MODE_TRANSPARENT = 11;
+  WAVEFORM_MODE_REGAL = 12;
+  WAVEFORM_MODE_SPECTRA_FULL_GC16 = 13;
+  WAVEFORM_MODE_SPECTRA_GLARE_REDUCED = 14;
+  WAVEFORM_MODE_SPECTRA_GHOST_REDUCED = 15;
+  WAVEFORM_MODE_SPECTRA_FULL_GCC16 = 16;
+}
+
+message Region {
+  int32 x1 = 1;
+  int32 y1 = 2;
+  int32 x2 = 3;
+  int32 y2 = 4;
+}
+
+message RefreshHeader {
+  WaveformMode mode = 1;
+  optional Region region = 2;
+  int64 total_bytes = 3;
+}
+
+message RefreshChunk {
+  oneof payload {
+    RefreshHeader header = 1;
+    bytes data = 2;
+  }
+}
+
+message RefreshResponse {
+  int64 elapsed_ms = 1;
+}
+
+message FillRequest {
+  uint32 argb = 1;
+  WaveformMode mode = 2;
+}
+
+message SetOverlayRequest {
+  bool enabled = 1;
+}
+
+message HealthResponse {
+  bool device_open = 1;
+  string last_error = 2;
+  string server_version = 3;
+  int64 uptime_seconds = 4;
+}
+
+message RotateResponse {
+  int64 scheduled_at_ms = 1;
+}
+
+message GetMetricsResponse {
+  string prom_text = 1;
+}
+
+message ReissueClientCertResponse {
+  string client_cert_pem = 1;
+  string client_key_pem = 2;
+  string client_cert_fingerprint = 3;
+  int64 server_restart_in_ms = 4;
+}

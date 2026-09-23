@@ -1,0 +1,260 @@
+version: "3"
+
+vars:
+  PROTO_DIR: einkproto
+  GO_PKG_EINKAPP: github.com/go-sicp/tableaux-eink-go/einkapp
+  AAR_OUT: android-host/app/libs/einkapp.aar
+  ANDROID_API_MIN: "26"
+  APP_ID: io.gosicp.tableauxeink
+  ACTIVITY: io.gosicp.tableauxeink.MainActivity
+  APK_DEBUG: android-host/app/build/outputs/apk/debug/app-debug.apk
+  DEVICE_FILES_DIR: /data/data/io.gosicp.tableauxeink/files
+  PRIV_APP_DIR: /system/priv-app/TableauxEinkGo
+
+tasks:
+  default:
+    silent: true
+    cmds:
+      - task: --list-all
+
+  # ---------------------------------------------------------------- proto
+
+  proto:
+    desc: "Regenerate Go protobuf + gRPC stubs from einkproto/display.proto"
+    sources:
+      - "{{.PROTO_DIR}}/display.proto"
+    generates:
+      - "{{.PROTO_DIR}}/display.pb.go"
+      - "{{.PROTO_DIR}}/display_grpc.pb.go"
+    cmds:
+      - protoc --go_out={{.PROTO_DIR}} --go_opt=paths=source_relative
+               --go-grpc_out={{.PROTO_DIR}} --go-grpc_opt=paths=source_relative
+               -I {{.PROTO_DIR}}
+               display.proto
+
+  # ---------------------------------------------------------------- build
+
+  build:
+    desc: "Build everything available locally (CLI; stubs for Android Go)"
+    cmds:
+      - task: build:cli
+      - task: vet
+
+  build:cli:
+    desc: "Build tableaux-cli for the host platform"
+    cmds:
+      - mkdir -p bin
+      - go build -o bin/tableaux-cli ./tableaux-cli/
+
+  build:aar:
+    desc: "gomobile bind einkapp -> android-host/app/libs/einkapp.aar"
+    preconditions:
+      - sh: "command -v gomobile"
+        msg: "gomobile not in PATH. Install with: go install golang.org/x/mobile/cmd/gomobile@latest && gomobile init"
+      - sh: "test -d ../androidsvc"
+        msg: "../androidsvc must exist (referenced by go.mod replace directive)"
+    cmds:
+      - mkdir -p android-host/app/libs
+      - gomobile bind -target=android -androidapi={{.ANDROID_API_MIN}}
+                       -o {{.AAR_OUT}} {{.GO_PKG_EINKAPP}}
+
+  build:apk:
+    desc: "Build the host Android APK (debug). Requires gradle >= 8.5 in PATH."
+    deps: [build:aar]
+    dir: android-host
+    cmds:
+      - gradle :app:assembleDebug --no-daemon
+
+  build:apk:release:
+    desc: "Build the release APK (unsigned)"
+    deps: [build:aar]
+    dir: android-host
+    cmds:
+      - gradle :app:assembleRelease --no-daemon
+
+  # ----------------------------------------------------------------- test
+
+  test:
+    desc: "Run Go unit tests"
+    cmds:
+      - go test ./...
+
+  vet:
+    desc: "go vet on all packages (stub variant on darwin)"
+    cmds:
+      - go vet ./...
+
+  fmt:
+    desc: "gofmt -s in place"
+    cmds:
+      - gofmt -s -w .
+
+  fmt:check:
+    desc: "Fail if any file is not gofmt -s clean"
+    cmds:
+      - >-
+        diff=$(gofmt -s -l . | tee /dev/stderr);
+        if [ -n "$diff" ]; then echo "gofmt -s issues found"; exit 1; fi
+
+  staticcheck:
+    desc: "Run staticcheck (skipped if not installed). Excludes U1000 because cross-platform packages have symbols only consumed under //go:build android."
+    cmds:
+      - >-
+        if command -v staticcheck >/dev/null; then
+          staticcheck -checks="inherit,-U1000" ./...;
+        else
+          echo "staticcheck not installed; skipping"; fi
+
+  ci:
+    desc: "Composite gate for CI: fmt:check + vet + test + build:cli"
+    cmds:
+      - task: fmt:check
+      - task: vet
+      - task: test
+      - task: build:cli
+      - task: staticcheck
+
+  # ---------------------------------------------------------------- adb
+
+  adb:devices:
+    desc: "List ADB devices"
+    cmds:
+      - adb devices -l
+
+  adb:install:
+    desc: "Install the debug APK on the connected device"
+    deps: [build:apk]
+    cmds:
+      - adb install -r {{.APK_DEBUG}}
+
+  adb:uninstall:
+    desc: "Uninstall the user-installed APK"
+    cmds:
+      - adb uninstall {{.APP_ID}} || true
+
+  adb:run:
+    desc: "Install + launch MainActivity"
+    deps: [adb:install]
+    cmds:
+      - adb shell am start -n {{.APP_ID}}/.MainActivity
+
+  adb:stop:
+    desc: "Force-stop the app"
+    cmds:
+      - adb shell am force-stop {{.APP_ID}}
+
+  adb:logcat:
+    desc: "Tail logcat filtered to androidsvc + ebc_jni + tableaux"
+    cmds:
+      - adb logcat -v color androidsvc:V ebc_jni:V tableaux:V '*:W'
+
+  adb:logcat:all:
+    desc: "Full unfiltered logcat"
+    cmds:
+      - adb logcat -v color
+
+  adb:port-forward:
+    desc: "Forward localhost:50051 to device:50051 for CLI testing without LAN"
+    cmds:
+      - adb forward tcp:50051 tcp:50051
+
+  adb:port-forward:remove:
+    cmds:
+      - adb forward --remove tcp:50051
+
+  pull:tls:
+    desc: "Pull the device's TLS material (cert/key/token) for CLI use"
+    cmds:
+      - mkdir -p tls
+      - adb shell run-as {{.APP_ID}} cat files/tls/cert.pem        > tls/cert.pem
+      - adb shell run-as {{.APP_ID}} cat files/tls/client-cert.pem > tls/client-cert.pem
+      - adb shell run-as {{.APP_ID}} cat files/tls/client-key.pem  > tls/client-key.pem
+      - adb shell run-as {{.APP_ID}} cat files/tls/token.txt       > tls/token.txt
+      - adb shell run-as {{.APP_ID}} cat files/tls/admin-token.txt > tls/admin-token.txt
+      - chmod 600 tls/*
+
+  # ------------------------------------------------------ system app deploy
+
+  adb:root:
+    desc: "adb root + remount /system (requires unlocked bootloader)"
+    cmds:
+      - adb root
+      - adb wait-for-device
+      - adb remount
+
+  adb:install-system:
+    desc: "Push the APK as a privileged system app (requires adb:root)"
+    deps: [build:apk]
+    cmds:
+      - task: adb:root
+      - adb shell mkdir -p {{.PRIV_APP_DIR}}
+      - adb push {{.APK_DEBUG}} {{.PRIV_APP_DIR}}/TableauxEinkGo.apk
+      - adb shell chmod 644 {{.PRIV_APP_DIR}}/TableauxEinkGo.apk
+      - adb reboot
+
+  adb:uninstall-system:
+    desc: "Remove the privileged system app and reboot"
+    cmds:
+      - task: adb:root
+      - adb shell rm -rf {{.PRIV_APP_DIR}}
+      - adb reboot
+
+  # --------------------------------------------------------- device probes
+
+  adb:list-ebc:
+    desc: "List candidate EBC / EPD / framebuffer device nodes"
+    cmds:
+      - adb shell 'ls -l /dev | grep -iE "ebc|epd|fb"'
+
+  adb:list-procs:
+    desc: "List likely panel-control processes"
+    cmds:
+      - adb shell 'ps -A | grep -iE "epdapp|sicp|tableaux" || true'
+
+  adb:strace-epdapp:
+    desc: "strace ioctls on the running epdapp process for ioctl number capture"
+    cmds:
+      - adb shell 'PID=$(pidof epdapp); if [ -z "$PID" ]; then echo "epdapp not running"; exit 1; fi; strace -f -e trace=ioctl -p $PID 2>&1' | tee strace.log
+
+  # -------------------------------------------------------------- CLI flow
+
+  cli:discover:
+    desc: "Browse `_tableaux-eink._tcp.` for 5 seconds"
+    cmds:
+      - go run ./tableaux-cli/ discover --timeout 5
+
+  cli:health:
+    desc: "Run tableaux-cli health against 127.0.0.1:50051 with adb forward"
+    deps: [build:cli, adb:port-forward, pull:tls]
+    cmds:
+      - >-
+        TOKEN=$(cat tls/token.txt);
+        ./bin/tableaux-cli health
+          -H 127.0.0.1 -t $TOKEN
+          --cert tls/cert.pem
+          --client-cert tls/client-cert.pem
+          --client-key tls/client-key.pem
+
+  cli:info:
+    deps: [build:cli, adb:port-forward, pull:tls]
+    cmds:
+      - >-
+        TOKEN=$(cat tls/token.txt);
+        ./bin/tableaux-cli info
+          -H 127.0.0.1 -t $TOKEN
+          --cert tls/cert.pem
+          --client-cert tls/client-cert.pem
+          --client-key tls/client-key.pem
+
+  # ---------------------------------------------------------- e2e workflow
+
+  full-deploy:
+    desc: "Full deployment: build APK -> install as system -> reboot -> tail logs"
+    cmds:
+      - task: build:apk
+      - task: adb:install-system
+      - 'echo "Device rebooting; once it is back up, run:  task adb:run && task adb:logcat"'
+
+  clean:
+    cmds:
+      - rm -rf bin/ android-host/app/build/ android-host/app/libs/einkapp.aar tls/ strace.log
