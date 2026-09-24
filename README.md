@@ -1,7 +1,7 @@
 # tableaux-eink-go
 
-Go port of the Kotlin project [`tableaux-eink/`](../tableaux-eink/), built
-to **exercise [`androidsvc`](../androidsvc/)** on a realistic workload: an
+Go port of the Kotlin project `tableaux-eink` (not published), built
+to **exercise [`androidsvc`](https://github.com/go-sicp/androidsvc)** on a realistic workload: an
 Android 13 foreground service hosting a TLS gRPC server that drives the
 Spectra 6 panel of a Philips Tableaux 32BDL5150I/00 via `/dev/ebc`.
 
@@ -37,7 +37,7 @@ einklib/   ── cgo ioctl ─────► /dev/ebc (Spectra 6)
 
 The gRPC server runs inside the Android process; its survival is guaranteed
 by the foreground service driven by `androidsvc` (see Android 13
-limitations documented in [`../androidsvc/README.md`](../androidsvc/README.md)).
+limitations documented in [`../androidsvc/README.md`](https://github.com/go-sicp/androidsvc/blob/main/README.md)).
 
 ## Build
 
