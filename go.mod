@@ -1,6 +1,6 @@
 module github.com/go-sicp/tableaux-eink-go
 
-go 1.26.0
+go 1.27.1
 
 require (
 	github.com/go-sicp/androidsvc v0.0.0-00010101000000-000000000000
