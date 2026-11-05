@@ -5,8 +5,8 @@ go 1.27.3
 require (
 	github.com/go-sicp/androidsvc v0.0.0-00010101000000-000000000000
 	github.com/grandcat/zeroconf v1.0.0
-	golang.org/x/mobile v0.0.0-20260908204917-8b95e45f8d3e
-	google.golang.org/grpc v1.84.0
+	golang.org/x/mobile v0.0.0-20261011034528-197770444867
+	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
 )
 
